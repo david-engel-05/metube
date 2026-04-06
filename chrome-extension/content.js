@@ -79,6 +79,37 @@ function getCaptionTracks() {
   try { return JSON.parse(attr); } catch { return null; }
 }
 
+async function fetchTranscriptText(baseUrl) {
+  // Versuche JSON3-Format
+  const res = await fetch(baseUrl + '&fmt=json3');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const raw = await res.text();
+  if (!raw || raw.trim() === '') throw new Error('Leere Antwort vom Server');
+
+  // Prüfe ob JSON oder XML
+  if (raw.trim().startsWith('{')) {
+    const data = JSON.parse(raw);
+    return data.events
+      ?.filter(e => e.segs)
+      .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
+      .filter(l => l)
+      .join('\n') || null;
+  }
+
+  // XML-Fallback (älteres Format)
+  if (raw.trim().startsWith('<')) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(raw, 'text/xml');
+    return Array.from(doc.querySelectorAll('text'))
+      .map(el => el.textContent.trim())
+      .filter(l => l)
+      .join('\n') || null;
+  }
+
+  throw new Error('Unbekanntes Format');
+}
+
 async function copyTranscript() {
   showToast('Transcript wird geladen…');
 
@@ -95,21 +126,9 @@ async function copyTranscript() {
       tracks.find(t => t.languageCode === 'en') ||
       tracks[0];
 
-    const res = await fetch(track.baseUrl + '&fmt=json3');
-    if (!res.ok) throw new Error('Fetch fehlgeschlagen');
+    const text = await fetchTranscriptText(track.baseUrl);
 
-    const data = await res.json();
-    const text = data.events
-      ?.filter(e => e.segs)
-      .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
-      .filter(l => l)
-      .join('\n');
-
-    if (!text) {
-      showToast('Transcript ist leer', true);
-      return;
-    }
-
+    if (!text) { showToast('Transcript ist leer', true); return; }
     await navigator.clipboard.writeText(text);
     showToast('Transcript kopiert!');
   } catch (err) {
@@ -197,13 +216,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         tracks[0];
 
       try {
-        const res = await fetch(track.baseUrl + '&fmt=json3');
-        const data = await res.json();
-        const text = data.events
-          ?.filter(e => e.segs)
-          .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
-          .filter(l => l)
-          .join('\n');
+        const text = await fetchTranscriptText(track.baseUrl);
         sendResponse(text ? { text } : { error: 'Transcript ist leer' });
       } catch (err) {
         sendResponse({ error: err.message });
