@@ -107,19 +107,31 @@ async function fetchTranscript(videoId) {
   const xml = await xmlRes.text();
   if (!xml?.trim()) throw new Error('Leere Caption-Antwort');
 
-  // Schritt 3: XML parsen
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  const text = Array.from(doc.querySelectorAll('text'))
-    .map(el => el.textContent
-      .replace(/&#39;/g, "'")
+  // Schritt 3: XML parsen — YouTube nutzt <p><s>Text</s></p> Format
+  function decodeEntities(str) {
+    return str
       .replace(/&amp;/g, '&')
-      .replace(/&quot;/g, '"')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
-      .trim()
-    )
-    .filter(l => l)
-    .join('\n');
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'");
+  }
+
+  // Format 3: <p t="..."><s>word</s><s>word</s></p>
+  const pMatches = [...xml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)];
+  let lines = pMatches.map(m => {
+    const sMatches = [...m[1].matchAll(/<s[^>]*>([^<]*)<\/s>/g)];
+    return decodeEntities(sMatches.map(s => s[1]).join('').trim());
+  }).filter(l => l);
+
+  // Fallback: altes <text>-Format
+  if (!lines.length) {
+    const tMatches = [...xml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)];
+    lines = tMatches.map(m => decodeEntities(m[1].trim())).filter(l => l);
+  }
+
+  const text = lines.join('\n');
 
   if (!text) throw new Error('Transcript ist leer');
   return text;
