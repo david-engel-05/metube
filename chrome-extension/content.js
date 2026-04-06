@@ -84,55 +84,31 @@ async function getCaptionTracks() {
   return null;
 }
 
-async function fetchTranscriptText(baseUrl) {
-  // Versuche zuerst XML (Standard-Format, zuverlässiger)
-  for (const url of [baseUrl, baseUrl + '&fmt=json3']) {
-    const res = await fetch(url);
-    if (!res.ok) continue;
-    const raw = await res.text();
-    if (!raw || raw.trim() === '') continue;
+// Delegiert den Fetch an content_main.js (MAIN world) via CustomEvent
+async function fetchTranscriptViaMainWorld() {
+  document.documentElement.removeAttribute('__metube_transcript_status__');
+  window.dispatchEvent(new CustomEvent('metube:fetch-transcript'));
 
-    if (raw.trim().startsWith('<')) {
-      const doc = new DOMParser().parseFromString(raw, 'text/xml');
-      const text = Array.from(doc.querySelectorAll('text'))
-        .map(el => el.textContent.replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim())
-        .filter(l => l)
-        .join('\n');
-      if (text) return text;
+  // Warte auf Ergebnis (max 10 Sekunden)
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    const status = document.documentElement.getAttribute('__metube_transcript_status__');
+    if (!status) continue;
+    if (status === 'done') {
+      return document.documentElement.getAttribute('__metube_transcript__');
     }
-
-    if (raw.trim().startsWith('{')) {
-      const data = JSON.parse(raw);
-      const text = data.events
-        ?.filter(e => e.segs)
-        .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
-        .filter(l => l)
-        .join('\n');
-      if (text) return text;
+    if (status.startsWith('error:')) {
+      throw new Error(status.slice(6));
     }
   }
-
-  throw new Error('Kein Transcript verfügbar');
+  throw new Error('Timeout beim Laden des Transcripts');
 }
 
 async function copyTranscript() {
   showToast('Transcript wird geladen…');
 
   try {
-    const tracks = await getCaptionTracks();
-
-    if (!tracks?.length) {
-      showToast('Kein Transcript verfügbar', true);
-      return;
-    }
-
-    const track =
-      tracks.find(t => t.languageCode === 'de') ||
-      tracks.find(t => t.languageCode === 'en') ||
-      tracks[0];
-
-    const text = await fetchTranscriptText(track.baseUrl);
-
+    const text = await fetchTranscriptViaMainWorld();
     if (!text) { showToast('Transcript ist leer', true); return; }
     await navigator.clipboard.writeText(text);
     showToast('Transcript kopiert!');
@@ -212,16 +188,8 @@ function injectButtons() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'METUBE_GET_TRANSCRIPT') {
     (async () => {
-      const tracks = await getCaptionTracks();
-      if (!tracks?.length) { sendResponse({ error: 'Kein Transcript verfügbar' }); return; }
-
-      const track =
-        tracks.find(t => t.languageCode === 'de') ||
-        tracks.find(t => t.languageCode === 'en') ||
-        tracks[0];
-
       try {
-        const text = await fetchTranscriptText(track.baseUrl);
+        const text = await fetchTranscriptViaMainWorld();
         sendResponse(text ? { text } : { error: 'Transcript ist leer' });
       } catch (err) {
         sendResponse({ error: err.message });
