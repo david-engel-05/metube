@@ -72,11 +72,16 @@ async function sendToMetube(downloadType) {
   }
 }
 
-// Liest Caption-Tracks die content_main.js (MAIN world) ins DOM geschrieben hat
-function getCaptionTracks() {
-  const attr = document.documentElement.getAttribute('__metube_captions__');
-  if (!attr) return null;
-  try { return JSON.parse(attr); } catch { return null; }
+// Wartet bis content_main.js das Attribut gesetzt hat (max 5 Sekunden)
+async function getCaptionTracks() {
+  for (let i = 0; i < 10; i++) {
+    const attr = document.documentElement.getAttribute('__metube_captions__');
+    if (attr) {
+      try { return JSON.parse(attr); } catch { return null; }
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return null;
 }
 
 async function fetchTranscriptText(baseUrl) {
@@ -114,7 +119,7 @@ async function copyTranscript() {
   showToast('Transcript wird geladen…');
 
   try {
-    const tracks = getCaptionTracks();
+    const tracks = await getCaptionTracks();
 
     if (!tracks?.length) {
       showToast('Kein Transcript verfügbar', true);
@@ -207,7 +212,7 @@ function injectButtons() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'METUBE_GET_TRANSCRIPT') {
     (async () => {
-      const tracks = getCaptionTracks();
+      const tracks = await getCaptionTracks();
       if (!tracks?.length) { sendResponse({ error: 'Kein Transcript verfügbar' }); return; }
 
       const track =

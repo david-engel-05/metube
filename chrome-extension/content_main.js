@@ -12,10 +12,16 @@ function exposeCaptions() {
       '__metube_captions__',
       JSON.stringify(tracks.map(t => ({ languageCode: t.languageCode, baseUrl: t.baseUrl })))
     );
+    return true;
   }
+  return false;
 }
 
-exposeCaptions();
+// Retry bis ytInitialPlayerResponse verfügbar ist (YouTube lädt async)
+let attempts = 0;
+const interval = setInterval(() => {
+  if (exposeCaptions() || ++attempts >= 20) clearInterval(interval);
+}, 500);
 
 // Auch bei YouTube-Navigation (SPA) neu setzen
 let lastHref = location.href;
@@ -23,6 +29,9 @@ new MutationObserver(() => {
   if (location.href !== lastHref) {
     lastHref = location.href;
     document.documentElement.removeAttribute('__metube_captions__');
-    setTimeout(exposeCaptions, 2000);
+    attempts = 0;
+    const retryInterval = setInterval(() => {
+      if (exposeCaptions() || ++attempts >= 20) clearInterval(retryInterval);
+    }, 500);
   }
 }).observe(document.body, { childList: true, subtree: true });
