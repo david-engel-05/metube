@@ -76,11 +76,34 @@ async function sendToMetube(downloadType) {
 function getPlayerResponse() {
   for (const script of document.querySelectorAll('script')) {
     const text = script.textContent;
-    if (!text.includes('ytInitialPlayerResponse')) continue;
-    const match = text.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\});(?:\s*(?:var|let|const|window))/);
-    if (match) {
-      try { return JSON.parse(match[1]); } catch {}
+    const idx = text.indexOf('ytInitialPlayerResponse');
+    if (idx === -1) continue;
+
+    // Finde das öffnende { nach dem =
+    const start = text.indexOf('{', idx);
+    if (start === -1) continue;
+
+    // Zähle Klammern um das Ende des JSON-Objekts zu finden
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let end = -1;
+
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (escape) { escape = false; continue; }
+      if (c === '\\' && inString) { escape = true; continue; }
+      if (c === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (c === '{') depth++;
+      else if (c === '}') {
+        depth--;
+        if (depth === 0) { end = i + 1; break; }
+      }
     }
+
+    if (end === -1) continue;
+    try { return JSON.parse(text.slice(start, end)); } catch {}
   }
   return null;
 }
