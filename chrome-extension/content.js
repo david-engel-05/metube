@@ -72,52 +72,72 @@ async function sendToMetube(downloadType) {
   }
 }
 
-async function copyTranscript() {
-  const videoId = getVideoId();
-  if (!videoId) return;
+// Liest ytInitialPlayerResponse aus dem YouTube-Seitenkontext via Script-Injection
+function getPlayerResponse() {
+  return new Promise((resolve) => {
+    const handler = (e) => {
+      if (e.data?.type === 'METUBE_PLAYER_RESPONSE') {
+        window.removeEventListener('message', handler);
+        resolve(e.data.data);
+      }
+    };
+    window.addEventListener('message', handler);
 
+    const script = document.createElement('script');
+    script.textContent = `window.postMessage({ type: 'METUBE_PLAYER_RESPONSE', data: window.ytInitialPlayerResponse }, '*');`;
+    document.documentElement.appendChild(script);
+    script.remove();
+
+    setTimeout(() => { window.removeEventListener('message', handler); resolve(null); }, 3000);
+  });
+}
+
+async function copyTranscript() {
   showToast('Transcript wird geladen…');
 
-  const urls = [
-    `https://www.youtube.com/api/timedtext?v=${videoId}&lang=de&fmt=json3`,
-    `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&fmt=json3`,
-    `https://www.youtube.com/api/timedtext?v=${videoId}&lang=de&kind=asr&fmt=json3`,
-    `https://www.youtube.com/api/timedtext?v=${videoId}&lang=en&kind=asr&fmt=json3`,
-  ];
+  try {
+    const playerResponse = await getPlayerResponse();
+    const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
-  for (const url of urls) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!data.events?.length) continue;
-
-      const text = data.events
-        .filter(e => e.segs)
-        .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
-        .filter(l => l)
-        .join('\n');
-
-      if (!text) continue;
-
-      await navigator.clipboard.writeText(text);
-      showToast('Transcript kopiert!');
+    if (!tracks?.length) {
+      showToast('Kein Transcript verfügbar', true);
       return;
-    } catch {}
-  }
+    }
 
-  showToast('Kein Transcript verfügbar', true);
+    const track =
+      tracks.find(t => t.languageCode === 'de') ||
+      tracks.find(t => t.languageCode === 'en') ||
+      tracks[0];
+
+    const res = await fetch(track.baseUrl + '&fmt=json3');
+    if (!res.ok) throw new Error('Fetch fehlgeschlagen');
+
+    const data = await res.json();
+    const text = data.events
+      ?.filter(e => e.segs)
+      .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
+      .filter(l => l)
+      .join('\n');
+
+    if (!text) {
+      showToast('Transcript ist leer', true);
+      return;
+    }
+
+    await navigator.clipboard.writeText(text);
+    showToast('Transcript kopiert!');
+  } catch (err) {
+    showToast(`Fehler: ${err.message}`, true);
+  }
 }
 
 function injectButtons() {
   if (!getVideoId()) return;
   if (document.getElementById('metube-bar')) return;
 
-  // Warte auf den Like/Dislike-Bereich als Anker
   const anchor = document.querySelector('#top-level-buttons-computed, ytd-menu-renderer.ytd-video-primary-info-renderer');
   if (!anchor) return;
 
-  // Styles einfügen (einmalig)
   if (!document.getElementById('metube-styles')) {
     const style = document.createElement('style');
     style.id = 'metube-styles';
@@ -144,20 +164,11 @@ function injectButtons() {
         font-family: 'Roboto', sans-serif;
       }
       .metube-btn:active { transform: scale(0.97); }
-      .metube-btn-video {
-        background: #4f46e5;
-        color: #fff;
-      }
+      .metube-btn-video { background: #4f46e5; color: #fff; }
       .metube-btn-video:hover { background: #4338ca; }
-      .metube-btn-audio {
-        background: rgba(255,255,255,0.1);
-        color: #e8e8e8;
-      }
+      .metube-btn-audio { background: rgba(255,255,255,0.1); color: #e8e8e8; }
       .metube-btn-audio:hover { background: rgba(255,255,255,0.18); }
-      .metube-btn-transcript {
-        background: rgba(255,255,255,0.08);
-        color: #aaa;
-      }
+      .metube-btn-transcript { background: rgba(255,255,255,0.08); color: #aaa; }
       .metube-btn-transcript:hover { background: rgba(255,255,255,0.15); color: #e8e8e8; }
     `;
     document.head.appendChild(style);
@@ -183,10 +194,38 @@ function injectButtons() {
   bar.appendChild(audioBtn);
   bar.appendChild(transcriptBtn);
 
-  // Einfügen direkt nach dem Anker-Element
   anchor.parentNode.insertBefore(bar, anchor.nextSibling);
   injected = true;
 }
+
+// Nachrichten vom Popup empfangen
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'METUBE_GET_TRANSCRIPT') {
+    getPlayerResponse().then(async (playerResponse) => {
+      const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      if (!tracks?.length) { sendResponse({ error: 'Kein Transcript verfügbar' }); return; }
+
+      const track =
+        tracks.find(t => t.languageCode === 'de') ||
+        tracks.find(t => t.languageCode === 'en') ||
+        tracks[0];
+
+      try {
+        const res = await fetch(track.baseUrl + '&fmt=json3');
+        const data = await res.json();
+        const text = data.events
+          ?.filter(e => e.segs)
+          .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
+          .filter(l => l)
+          .join('\n');
+        sendResponse(text ? { text } : { error: 'Transcript ist leer' });
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    });
+    return true; // async response
+  }
+});
 
 // YouTube navigiert ohne Seiten-Reload — auf URL-Änderungen reagieren
 let lastUrl = location.href;
