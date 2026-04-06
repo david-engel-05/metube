@@ -72,48 +72,18 @@ async function sendToMetube(downloadType) {
   }
 }
 
-// Liest ytInitialPlayerResponse direkt aus den <script>-Tags im DOM
-function getPlayerResponse() {
-  for (const script of document.querySelectorAll('script')) {
-    const text = script.textContent;
-    const idx = text.indexOf('ytInitialPlayerResponse');
-    if (idx === -1) continue;
-
-    // Finde das öffnende { nach dem =
-    const start = text.indexOf('{', idx);
-    if (start === -1) continue;
-
-    // Zähle Klammern um das Ende des JSON-Objekts zu finden
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    let end = -1;
-
-    for (let i = start; i < text.length; i++) {
-      const c = text[i];
-      if (escape) { escape = false; continue; }
-      if (c === '\\' && inString) { escape = true; continue; }
-      if (c === '"') { inString = !inString; continue; }
-      if (inString) continue;
-      if (c === '{') depth++;
-      else if (c === '}') {
-        depth--;
-        if (depth === 0) { end = i + 1; break; }
-      }
-    }
-
-    if (end === -1) continue;
-    try { return JSON.parse(text.slice(start, end)); } catch {}
-  }
-  return null;
+// Liest Caption-Tracks die content_main.js (MAIN world) ins DOM geschrieben hat
+function getCaptionTracks() {
+  const attr = document.documentElement.getAttribute('__metube_captions__');
+  if (!attr) return null;
+  try { return JSON.parse(attr); } catch { return null; }
 }
 
 async function copyTranscript() {
   showToast('Transcript wird geladen…');
 
   try {
-    const playerResponse = getPlayerResponse();
-    const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    const tracks = getCaptionTracks();
 
     if (!tracks?.length) {
       showToast('Kein Transcript verfügbar', true);
@@ -218,8 +188,7 @@ function injectButtons() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'METUBE_GET_TRANSCRIPT') {
     (async () => {
-      const playerResponse = getPlayerResponse();
-      const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      const tracks = getCaptionTracks();
       if (!tracks?.length) { sendResponse({ error: 'Kein Transcript verfügbar' }); return; }
 
       const track =
