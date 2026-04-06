@@ -72,31 +72,24 @@ async function sendToMetube(downloadType) {
   }
 }
 
-// Liest ytInitialPlayerResponse aus dem YouTube-Seitenkontext via Script-Injection
+// Liest ytInitialPlayerResponse direkt aus den <script>-Tags im DOM
 function getPlayerResponse() {
-  return new Promise((resolve) => {
-    const handler = (e) => {
-      if (e.data?.type === 'METUBE_PLAYER_RESPONSE') {
-        window.removeEventListener('message', handler);
-        resolve(e.data.data);
-      }
-    };
-    window.addEventListener('message', handler);
-
-    const script = document.createElement('script');
-    script.textContent = `window.postMessage({ type: 'METUBE_PLAYER_RESPONSE', data: window.ytInitialPlayerResponse }, '*');`;
-    document.documentElement.appendChild(script);
-    script.remove();
-
-    setTimeout(() => { window.removeEventListener('message', handler); resolve(null); }, 3000);
-  });
+  for (const script of document.querySelectorAll('script')) {
+    const text = script.textContent;
+    if (!text.includes('ytInitialPlayerResponse')) continue;
+    const match = text.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\});(?:\s*(?:var|let|const|window))/);
+    if (match) {
+      try { return JSON.parse(match[1]); } catch {}
+    }
+  }
+  return null;
 }
 
 async function copyTranscript() {
   showToast('Transcript wird geladen…');
 
   try {
-    const playerResponse = await getPlayerResponse();
+    const playerResponse = getPlayerResponse();
     const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
     if (!tracks?.length) {
@@ -201,7 +194,8 @@ function injectButtons() {
 // Nachrichten vom Popup empfangen
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'METUBE_GET_TRANSCRIPT') {
-    getPlayerResponse().then(async (playerResponse) => {
+    (async () => {
+      const playerResponse = getPlayerResponse();
       const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
       if (!tracks?.length) { sendResponse({ error: 'Kein Transcript verfügbar' }); return; }
 
@@ -222,7 +216,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       } catch (err) {
         sendResponse({ error: err.message });
       }
-    });
+    })();
     return true; // async response
   }
 });
