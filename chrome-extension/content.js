@@ -1,6 +1,7 @@
 const DEFAULT_METUBE_URL = 'http://localhost:8081';
-
 let injected = false;
+
+// --- Hilfsfunktionen ---
 
 function getVideoId() {
   const match = location.href.match(/[?&]v=([^&]+)/);
@@ -45,6 +46,8 @@ function showToast(message, isError = false) {
   }, 3000);
 }
 
+// --- Download ---
+
 async function sendToMetube(downloadType) {
   const url = location.href;
   const { metubeUrl = DEFAULT_METUBE_URL } = await chrome.storage.sync.get('metubeUrl');
@@ -53,13 +56,7 @@ async function sendToMetube(downloadType) {
     const res = await fetch(`${metubeUrl}/add`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url,
-        download_type: downloadType,
-        quality: 'best',
-        format: 'any',
-        auto_start: true,
-      }),
+      body: JSON.stringify({ url, download_type: downloadType, quality: 'best', format: 'any', auto_start: true }),
     });
     const data = await res.json();
     if (data.status === 'ok' || data.added) {
@@ -72,50 +69,90 @@ async function sendToMetube(downloadType) {
   }
 }
 
-// Wartet bis content_main.js das Attribut gesetzt hat (max 5 Sekunden)
-async function getCaptionTracks() {
-  for (let i = 0; i < 10; i++) {
-    const attr = document.documentElement.getAttribute('__metube_captions__');
-    if (attr) {
-      try { return JSON.parse(attr); } catch { return null; }
-    }
-    await new Promise(r => setTimeout(r, 500));
-  }
-  return null;
-}
+// --- Transcript via Innertube API ---
+// Kein Cookie, kein MAIN-world Hack — funktioniert mit Android-Client-Context
 
-// Delegiert den Fetch an content_main.js (MAIN world) via CustomEvent
-async function fetchTranscriptViaMainWorld() {
-  document.documentElement.removeAttribute('__metube_transcript_status__');
-  window.dispatchEvent(new CustomEvent('metube:fetch-transcript'));
+async function fetchTranscript(videoId) {
+  // Schritt 1: Innertube API POST mit Android-Client (kein Login nötig)
+  const playerRes = await fetch('https://www.youtube.com/youtubei/v1/player', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      context: {
+        client: {
+          clientName: 'ANDROID',
+          clientVersion: '20.10.38',
+          androidSdkVersion: 30,
+        }
+      },
+      videoId,
+    }),
+  });
 
-  // Warte auf Ergebnis (max 10 Sekunden)
-  for (let i = 0; i < 20; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    const status = document.documentElement.getAttribute('__metube_transcript_status__');
-    if (!status) continue;
-    if (status === 'done') {
-      return document.documentElement.getAttribute('__metube_transcript__');
-    }
-    if (status.startsWith('error:')) {
-      throw new Error(status.slice(6));
-    }
-  }
-  throw new Error('Timeout beim Laden des Transcripts');
+  if (!playerRes.ok) throw new Error(`Innertube: HTTP ${playerRes.status}`);
+  const playerData = await playerRes.json();
+
+  const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  if (!tracks?.length) throw new Error('Kein Transcript verfügbar');
+
+  // Sprache bevorzugen: DE → EN → erste verfügbare
+  const track =
+    tracks.find(t => t.languageCode === 'de') ||
+    tracks.find(t => t.languageCode === 'en') ||
+    tracks[0];
+
+  // Schritt 2: XML-Captions abrufen
+  const xmlRes = await fetch(track.baseUrl);
+  if (!xmlRes.ok) throw new Error(`Caption-Fetch: HTTP ${xmlRes.status}`);
+  const xml = await xmlRes.text();
+  if (!xml?.trim()) throw new Error('Leere Caption-Antwort');
+
+  // Schritt 3: XML parsen
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const text = Array.from(doc.querySelectorAll('text'))
+    .map(el => el.textContent
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .trim()
+    )
+    .filter(l => l)
+    .join('\n');
+
+  if (!text) throw new Error('Transcript ist leer');
+  return text;
 }
 
 async function copyTranscript() {
-  showToast('Transcript wird geladen…');
+  const videoId = getVideoId();
+  if (!videoId) { showToast('Keine YouTube-Video-URL', true); return; }
 
+  showToast('Transcript wird geladen…');
   try {
-    const text = await fetchTranscriptViaMainWorld();
-    if (!text) { showToast('Transcript ist leer', true); return; }
+    const text = await fetchTranscript(videoId);
     await navigator.clipboard.writeText(text);
     showToast('Transcript kopiert!');
   } catch (err) {
-    showToast(`Fehler: ${err.message}`, true);
+    showToast(err.message, true);
   }
 }
+
+// --- Nachrichten vom Popup ---
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'METUBE_GET_TRANSCRIPT') {
+    const videoId = getVideoId();
+    if (!videoId) { sendResponse({ error: 'Keine YouTube-Video-URL' }); return true; }
+    fetchTranscript(videoId)
+      .then(text => sendResponse({ text }))
+      .catch(err => sendResponse({ error: err.message }));
+    return true;
+  }
+});
+
+// --- Buttons in YouTube-Seite einbauen ---
 
 function injectButtons() {
   if (!getVideoId()) return;
@@ -184,22 +221,8 @@ function injectButtons() {
   injected = true;
 }
 
-// Nachrichten vom Popup empfangen
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.type === 'METUBE_GET_TRANSCRIPT') {
-    (async () => {
-      try {
-        const text = await fetchTranscriptViaMainWorld();
-        sendResponse(text ? { text } : { error: 'Transcript ist leer' });
-      } catch (err) {
-        sendResponse({ error: err.message });
-      }
-    })();
-    return true; // async response
-  }
-});
+// --- YouTube SPA-Navigation ---
 
-// YouTube navigiert ohne Seiten-Reload — auf URL-Änderungen reagieren
 let lastUrl = location.href;
 const observer = new MutationObserver(() => {
   if (location.href !== lastUrl) {

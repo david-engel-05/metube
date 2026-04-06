@@ -13,7 +13,8 @@
   "host_permissions": [
     "http://localhost/*",
     "https://localhost/*",
-    "https://www.youtube.com/*"
+    "https://www.youtube.com/*",
+    "https://www.youtube.com/youtubei/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -27,12 +28,6 @@
     "service_worker": "background.js"
   },
   "content_scripts": [
-    {
-      "matches": ["https://www.youtube.com/watch*"],
-      "js": ["content_main.js"],
-      "run_at": "document_idle",
-      "world": "MAIN"
-    },
     {
       "matches": ["https://www.youtube.com/watch*"],
       "js": ["content.js"],
