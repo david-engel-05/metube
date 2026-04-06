@@ -80,34 +80,34 @@ function getCaptionTracks() {
 }
 
 async function fetchTranscriptText(baseUrl) {
-  // Versuche JSON3-Format
-  const res = await fetch(baseUrl + '&fmt=json3');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  // Versuche zuerst XML (Standard-Format, zuverlässiger)
+  for (const url of [baseUrl, baseUrl + '&fmt=json3']) {
+    const res = await fetch(url);
+    if (!res.ok) continue;
+    const raw = await res.text();
+    if (!raw || raw.trim() === '') continue;
 
-  const raw = await res.text();
-  if (!raw || raw.trim() === '') throw new Error('Leere Antwort vom Server');
+    if (raw.trim().startsWith('<')) {
+      const doc = new DOMParser().parseFromString(raw, 'text/xml');
+      const text = Array.from(doc.querySelectorAll('text'))
+        .map(el => el.textContent.replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim())
+        .filter(l => l)
+        .join('\n');
+      if (text) return text;
+    }
 
-  // Prüfe ob JSON oder XML
-  if (raw.trim().startsWith('{')) {
-    const data = JSON.parse(raw);
-    return data.events
-      ?.filter(e => e.segs)
-      .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
-      .filter(l => l)
-      .join('\n') || null;
+    if (raw.trim().startsWith('{')) {
+      const data = JSON.parse(raw);
+      const text = data.events
+        ?.filter(e => e.segs)
+        .map(e => e.segs.map(s => s.utf8 || '').join('').trim())
+        .filter(l => l)
+        .join('\n');
+      if (text) return text;
+    }
   }
 
-  // XML-Fallback (älteres Format)
-  if (raw.trim().startsWith('<')) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(raw, 'text/xml');
-    return Array.from(doc.querySelectorAll('text'))
-      .map(el => el.textContent.trim())
-      .filter(l => l)
-      .join('\n') || null;
-  }
-
-  throw new Error('Unbekanntes Format');
+  throw new Error('Kein Transcript verfügbar');
 }
 
 async function copyTranscript() {
