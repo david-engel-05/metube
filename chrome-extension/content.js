@@ -257,10 +257,27 @@ async function copyTranscript() {
   showToast('Transcript wird geladen…');
   try {
     const text = await fetchTranscript(videoId);
-    await navigator.clipboard.writeText(text);
-    showToast('Transcript kopiert!');
+
+    // navigator.clipboard.writeText() kann nach einem await den User-Gesture-Kontext verlieren.
+    // Deshalb: erst moderne Clipboard API versuchen, bei Fehler execCommand als Fallback.
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none';
+      document.body.appendChild(el);
+      el.focus();
+      el.select();
+      copied = document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+
+    showToast(copied ? 'Transcript kopiert! ✓' : 'Kopieren fehlgeschlagen', !copied);
   } catch (err) {
-    showToast(err.message, true);
+    showToast(err.message || 'Transcript-Fehler', true);
   }
 }
 
@@ -413,34 +430,33 @@ function injectButtons() {
  */
 let lastUrl = location.href;
 
-const observer = new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    // URL hat sich geändert → Nutzer hat das Video gewechselt
-    lastUrl = location.href;
-    injected = false; // Flag zurücksetzen damit Buttons neu eingefügt werden
-
-    // Kurz warten bis YouTube die neue Videoseite gerendert hat
-    setTimeout(tryInject, 1500);
-  }
-
-  // Bei jeder DOM-Änderung versuchen die Buttons einzufügen.
-  // tryInject() bricht sofort ab wenn sie schon vorhanden sind (injected === true).
-  if (!injected) tryInject();
-});
-
 /**
- * Prüft ob wir auf einer YouTube-Videoseite sind und startet ggf. injectButtons().
+ * Versucht Buttons alle 500ms einzufügen — bis zu 20 Versuche (10 Sekunden).
+ * Nötig weil YouTube den Anker-Knoten asynchron rendert.
  */
-function tryInject() {
-  // Nur auf youtube.com/watch ausführen, nicht auf Startseite, Shorts, etc.
+function scheduleInject() {
   if (!location.href.includes('youtube.com/watch')) return;
-  injectButtons();
+  let attempts = 0;
+  const timer = setInterval(() => {
+    attempts++;
+    if (injected || attempts > 20) { clearInterval(timer); return; }
+    injectButtons();
+  }, 500);
 }
 
-// Observer auf dem gesamten <body> starten.
-// childList: direkte Kind-Änderungen beobachten
-// subtree: auch alle Nachfahren-Elemente beobachten (nötig für YouTube's tiefe DOM-Struktur)
-observer.observe(document.body, { childList: true, subtree: true });
+function onNavigate() {
+  if (location.href === lastUrl) return;
+  lastUrl = location.href;
+  injected = false;
+  scheduleInject();
+}
 
-// Erste Ausführung nach 1.5 Sekunden — YouTube braucht Zeit um die Seite zu rendern
-setTimeout(tryInject, 1500);
+// YouTube feuert diesen Event selbst bei jedem Video-Wechsel (SPA-Navigation).
+// Kein MutationObserver nötig — deutlich weniger CPU-Last.
+window.addEventListener('yt-navigate-finish', onNavigate);
+
+// Backup-Polling alle 2s, falls yt-navigate-finish mal nicht feuert.
+setInterval(onNavigate, 2000);
+
+// Erste Ausführung beim Tab-Laden
+scheduleInject();
