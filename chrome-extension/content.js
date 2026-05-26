@@ -338,7 +338,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!videoId) { sendResponse({ error: 'Keine YouTube-Video-URL' }); return true; }
 
     fetchTranscript(videoId)
-      .then(text => sendResponse({ text }))
+      .then(({ metadata, text }) => sendResponse({ metadata, text }))
       .catch(err => sendResponse({ error: err.message }));
 
     // "return true" ist ZWINGEND bei asynchronem sendResponse!
