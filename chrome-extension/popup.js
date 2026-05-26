@@ -124,6 +124,10 @@ async function copyTranscript() {
       if (response?.error) throw new Error(response.error);
       text = buildClipboardText(response.metadata ?? {}, response.text ?? '');
     } catch (msgErr) {
+      const isConnectionError =
+        msgErr.message?.includes('Could not establish connection') ||
+        msgErr.message?.includes('Receiving end does not exist');
+      if (!isConnectionError) throw msgErr;
       // Content Script nicht bereit (Tab wurde nach Extension-Reload nicht neu geladen)
       // → Fallback: executeScript direkt im Tab ausführen
       const results = await chrome.scripting.executeScript({

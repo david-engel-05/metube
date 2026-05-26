@@ -329,7 +329,7 @@ async function copyTranscript() {
  *     → popup.js: chrome.tabs.sendMessage(tabId, { type: 'METUBE_GET_TRANSCRIPT' })
  *     → Dieser Listener empfängt die Nachricht
  *     → fetchTranscript() wird ausgeführt
- *     → sendResponse({ text }) schickt das Ergebnis zurück ans Popup
+ *     → sendResponse({ metadata, text }) schickt das Ergebnis zurück ans Popup
  *     → popup.js kopiert den Text in die Zwischenablage
  */
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
