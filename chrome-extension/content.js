@@ -211,6 +211,15 @@ async function fetchTranscript(videoId) {
   // Die JSON-Antwort enthält alle Videodaten: Titel, Streams, Captions, Thumbnails...
   const playerData = await playerRes.json();
 
+  // Metadaten aus playerData extrahieren
+  const rawDesc = playerData?.videoDetails?.shortDescription ?? '';
+  const metadata = {
+    title: playerData?.videoDetails?.title ?? '',
+    author: playerData?.videoDetails?.author ?? '',
+    date: playerData?.microformat?.playerMicroformatRenderer?.publishDate ?? '',
+    description: rawDesc.length > 300 ? rawDesc.slice(0, 300) + '…' : rawDesc,
+  };
+
   // Caption-Tracks aus der tief verschachtelten Antwort-Struktur extrahieren.
   // Jeder Track hat: { languageCode: "en", baseUrl: "https://...", name: {...} }
   const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
@@ -262,7 +271,7 @@ async function fetchTranscript(videoId) {
 
   const text = lines.join('\n');
   if (!text) throw new Error('Transcript ist leer');
-  return text;
+  return { metadata, text };
 }
 
 /**
@@ -277,17 +286,18 @@ async function copyTranscript() {
 
   showToast('Transcript wird geladen…');
   try {
-    const text = await fetchTranscript(videoId);
+    const { metadata, text } = await fetchTranscript(videoId);
+    const clipboardText = buildClipboardText(metadata, text);
 
     // navigator.clipboard.writeText() kann nach einem await den User-Gesture-Kontext verlieren.
     // Deshalb: erst moderne Clipboard API versuchen, bei Fehler execCommand als Fallback.
     let copied = false;
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(clipboardText);
       copied = true;
     } catch {
       const el = document.createElement('textarea');
-      el.value = text;
+      el.value = clipboardText;
       el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none';
       document.body.appendChild(el);
       el.focus();
