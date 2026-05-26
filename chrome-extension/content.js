@@ -87,6 +87,27 @@ function showToast(message, isError = false) {
   }, 3000);
 }
 
+/**
+ * Erstellt einen Markdown-formattierten Text aus Video-Metadaten und Transcript.
+ * Wird für die Zwischenablage-Funktion genutzt.
+ *
+ * @param {Object} metadata — { title, author, date, description }
+ * @param {string} text — Das Transcript-Text
+ * @returns {string} — Formatierter Markdown-Text
+ */
+function buildClipboardText(metadata, text) {
+  const parts = [];
+  if (metadata.title) parts.push(`# ${metadata.title}\n`);
+  const meta = [];
+  if (metadata.author) meta.push(`**Kanal:** ${metadata.author}`);
+  if (metadata.date) meta.push(`**Datum:** ${metadata.date}`);
+  if (metadata.description) meta.push(`**Beschreibung:** ${metadata.description}`);
+  if (meta.length) parts.push(meta.join('\n'));
+  parts.push('\n---\n');
+  parts.push(text);
+  return parts.join('\n');
+}
+
 
 // ============================================================
 // DOWNLOAD-FUNKTION
