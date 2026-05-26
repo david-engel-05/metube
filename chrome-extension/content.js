@@ -97,13 +97,13 @@ function showToast(message, isError = false) {
  */
 function buildClipboardText(metadata, text) {
   const parts = [];
-  if (metadata.title) parts.push(`# ${metadata.title}\n`);
+  if (metadata.title) parts.push(`# ${metadata.title}`);
   const meta = [];
   if (metadata.author) meta.push(`**Kanal:** ${metadata.author}`);
   if (metadata.date) meta.push(`**Datum:** ${metadata.date}`);
   if (metadata.description) meta.push(`**Beschreibung:** ${metadata.description}`);
   if (meta.length) parts.push(meta.join('\n'));
-  parts.push('\n---\n');
+  parts.push('---');
   parts.push(text);
   return parts.join('\n');
 }
