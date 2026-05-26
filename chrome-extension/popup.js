@@ -2,6 +2,19 @@ const DEFAULT_METUBE_URL = 'http://localhost:8081';
 
 let downloadType = 'video';
 
+function buildClipboardText(metadata, text) {
+  const parts = [];
+  if (metadata.title) parts.push(`# ${metadata.title}`);
+  const meta = [];
+  if (metadata.author) meta.push(`**Kanal:** ${metadata.author}`);
+  if (metadata.date) meta.push(`**Datum:** ${metadata.date}`);
+  if (metadata.description) meta.push(`**Beschreibung:** ${metadata.description}`);
+  if (meta.length) parts.push(meta.join('\n'));
+  parts.push('---');
+  parts.push(text);
+  return parts.join('\n');
+}
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -96,8 +109,6 @@ async function sendDownload() {
 }
 
 // --- Transcript ---
-// Delegiert an den Content Script des aktiven Tabs, da nur dieser
-// Zugriff auf ytInitialPlayerResponse hat.
 async function copyTranscript() {
   const originalContent = document.getElementById('transcriptBtn').innerHTML;
   setLoading('transcriptBtn', true, originalContent);
@@ -105,16 +116,57 @@ async function copyTranscript() {
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'METUBE_GET_TRANSCRIPT' });
 
-    if (response?.error) {
-      showStatus(response.error, 'error');
-    } else if (response?.text) {
-      await navigator.clipboard.writeText(response.text);
-      showStatus('Transcript kopiert!', 'success');
-    } else {
-      showStatus('Kein Transcript verfügbar.', 'error');
+    // Erst sendMessage versuchen (content.js im Tab macht den Fetch mit korrekter Origin)
+    let text = null;
+    try {
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'METUBE_GET_TRANSCRIPT' });
+      if (response?.error) throw new Error(response.error);
+      text = buildClipboardText(response.metadata ?? {}, response.text ?? '');
+    } catch (msgErr) {
+      // Content Script nicht bereit (Tab wurde nach Extension-Reload nicht neu geladen)
+      // → Fallback: executeScript direkt im Tab ausführen
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: async (vid) => {
+          const playerRes = await fetch('https://www.youtube.com/youtubei/v1/player', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              context: { client: { clientName: 'ANDROID', clientVersion: '20.10.38', androidSdkVersion: 30 } },
+              videoId: vid,
+            }),
+          });
+          if (!playerRes.ok) throw new Error(`Innertube: HTTP ${playerRes.status}`);
+          const playerData = await playerRes.json();
+          const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+          if (!tracks?.length) throw new Error('Kein Transcript verfügbar');
+          const track = tracks.find(t => t.languageCode === 'de') || tracks.find(t => t.languageCode === 'en') || tracks[0];
+          const xmlRes = await fetch(track.baseUrl);
+          if (!xmlRes.ok) throw new Error(`Caption-Fetch: HTTP ${xmlRes.status}`);
+          const xml = await xmlRes.text();
+          if (!xml?.trim()) throw new Error('Leere Caption-Antwort');
+          const dec = s => s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&apos;/g,"'");
+          const pMatches = [...xml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)];
+          let lines = pMatches.map(m => {
+            const sMatches = [...m[1].matchAll(/<s[^>]*>([^<]*)<\/s>/g)];
+            return dec(sMatches.map(s => s[1]).join('').trim());
+          }).filter(l => l);
+          if (!lines.length) {
+            lines = [...xml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => dec(m[1].trim())).filter(l => l);
+          }
+          const result = lines.join('\n');
+          if (!result) throw new Error('Transcript ist leer');
+          return result;
+        },
+        args: [extractVideoId(tab.url)],
+      });
+      text = results?.[0]?.result;
     }
+
+    if (!text) throw new Error('Kein Transcript erhalten');
+    await navigator.clipboard.writeText(text);
+    showStatus('Transcript kopiert! ✓', 'success');
   } catch (err) {
     showStatus(`Fehler: ${err.message}`, 'error');
   } finally {
