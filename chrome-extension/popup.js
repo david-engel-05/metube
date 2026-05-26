@@ -139,6 +139,13 @@ async function copyTranscript() {
           });
           if (!playerRes.ok) throw new Error(`Innertube: HTTP ${playerRes.status}`);
           const playerData = await playerRes.json();
+          const rawDesc = playerData?.videoDetails?.shortDescription ?? '';
+          const metadata = {
+            title: playerData?.videoDetails?.title ?? '',
+            author: playerData?.videoDetails?.author ?? '',
+            date: playerData?.microformat?.playerMicroformatRenderer?.publishDate ?? '',
+            description: rawDesc.length > 300 ? rawDesc.slice(0, 300) + '…' : rawDesc,
+          };
           const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
           if (!tracks?.length) throw new Error('Kein Transcript verfügbar');
           const track = tracks.find(t => t.languageCode === 'de') || tracks.find(t => t.languageCode === 'en') || tracks[0];
@@ -155,13 +162,14 @@ async function copyTranscript() {
           if (!lines.length) {
             lines = [...xml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => dec(m[1].trim())).filter(l => l);
           }
-          const result = lines.join('\n');
-          if (!result) throw new Error('Transcript ist leer');
-          return result;
+          const transcriptText = lines.join('\n');
+          if (!transcriptText) throw new Error('Transcript ist leer');
+          return { metadata, text: transcriptText };
         },
         args: [extractVideoId(tab.url)],
       });
-      text = results?.[0]?.result;
+      const fallbackResult = results?.[0]?.result;
+      text = fallbackResult ? buildClipboardText(fallbackResult.metadata ?? {}, fallbackResult.text ?? '') : null;
     }
 
     if (!text) throw new Error('Kein Transcript erhalten');
