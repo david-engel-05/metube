@@ -253,13 +253,22 @@ async function fetchTranscript(videoId) {
       .replace(/&apos;/g, "'");
   }
 
-  // Primär: "timedtext format 3" — <p> Blöcke mit <s> Wort-Segmenten.
-  // matchAll() findet alle <p>...</p> Blöcke im XML-String.
+  // Primär: "timedtext format 3" — <p> Blöcke.
+  // YouTube liefert zwei Varianten:
+  //   a) Mit <s>-Wort-Segmenten (auto-generierte Untertitel mit Wort-Timing)
+  //      <p t="400"><s>Hallo</s><s> Welt</s></p>
+  //   b) Ohne <s>-Segmente (manuell hochgeladene Untertitel / kein Wort-Timing)
+  //      <p t="400">Hallo Welt</p>
   const pMatches = [...xml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)];
   let lines = pMatches.map(m => {
-    // Innerhalb jedes <p>-Blocks alle <s>-Wörter zusammenfügen
-    const sMatches = [...m[1].matchAll(/<s[^>]*>([^<]*)<\/s>/g)];
-    return decodeEntities(sMatches.map(s => s[1]).join('').trim());
+    const inner = m[1];
+    const sMatches = [...inner.matchAll(/<s[^>]*>([^<]*)<\/s>/g)];
+    if (sMatches.length) {
+      // Variante a: <s>-Segmente zusammenfügen
+      return decodeEntities(sMatches.map(s => s[1]).join('').trim());
+    }
+    // Variante b: Text direkt aus <p> lesen, verbleibende XML-Tags entfernen
+    return decodeEntities(inner.replace(/<[^>]*>/g, '').trim());
   }).filter(l => l); // Leere Zeilen entfernen
 
   // Fallback: älteres <text>-Format (manuelle Untertitel haben manchmal dieses Format)

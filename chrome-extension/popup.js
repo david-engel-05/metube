@@ -160,8 +160,10 @@ async function copyTranscript() {
           const dec = s => s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&apos;/g,"'");
           const pMatches = [...xml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)];
           let lines = pMatches.map(m => {
-            const sMatches = [...m[1].matchAll(/<s[^>]*>([^<]*)<\/s>/g)];
-            return dec(sMatches.map(s => s[1]).join('').trim());
+            const inner = m[1];
+            const sMatches = [...inner.matchAll(/<s[^>]*>([^<]*)<\/s>/g)];
+            if (sMatches.length) return dec(sMatches.map(s => s[1]).join('').trim());
+            return dec(inner.replace(/<[^>]*>/g, '').trim());
           }).filter(l => l);
           if (!lines.length) {
             lines = [...xml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map(m => dec(m[1].trim())).filter(l => l);
